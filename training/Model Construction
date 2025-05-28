@@ -1,0 +1,135 @@
+import numpy as np
+import pandas as pd
+from sklearn.model_selection import GridSearchCV
+from sklearn.metrics import (
+    accuracy_score, precision_score, recall_score, f1_score, classification_report, matthews_corrcoef, roc_auc_score
+)
+from sklearn.neighbors import KNeighborsClassifier
+from sklearn.neural_network import MLPClassifier
+from sklearn.svm import SVC
+from sklearn.tree import DecisionTreeClassifier
+from joblib import dump  # 用于保存模型
+
+# 加载数据
+df1 = pd.read_excel("D:/DATA/训练集.xlsx")
+df2 = pd.read_excel("D:/DATA/测试集.xlsx")
+
+# 分割特征与标签
+X_train = df1.iloc[:, 8:174]  # 特征
+y_train = df1.iloc[:, -1]  # 标签
+
+X_test = df2.iloc[:, 8:174]  # 特征
+y_test = df2.iloc[:, -1]  # 标签
+
+# 定义模型参数网格
+param_grid_knn = {
+    'n_neighbors': [3, 5, 7, 9, 11],
+    'weights': ['uniform', 'distance'],
+    'p': [1, 2]
+}
+
+param_grid_mlp = {
+    'hidden_layer_sizes': [(50,), (100,), (50, 50), (100, 100)],
+    'activation': ['relu', 'tanh'],
+    'solver': ['sgd', 'adam'],
+    'alpha': [0.0001, 0.05],  # 增加 alpha 参数
+    'learning_rate': ['constant', 'adaptive'],
+    'max_iter': [100, 200],
+    'early_stopping': [True],  # 增加 early_stopping 参数
+    'validation_fraction': [0.1, 0.2]  # 增加 validation_fraction 参数
+}
+
+param_grid_svm = {
+    'C': [0.1, 1, 10, 50],
+    'gamma': ['scale', 'auto', 0.001, 0.01],
+    'kernel': ['linear', 'rbf', 'poly'],
+    'degree': [2, 3, 4]  # 仅当 kernel='poly' 时有效
+}
+
+param_grid_dt = {
+    'criterion': ['gini', 'entropy'],
+    'max_depth': [None, 10, 20, 30, 40, 50],
+    'min_samples_split': [2, 5, 10],
+    'min_samples_leaf': [1, 2, 4]
+}
+
+# 初始化模型
+knn_model = KNeighborsClassifier()
+mlp_model = MLPClassifier(random_state=42)
+svm_model = SVC(probability=True, random_state=42)  # 确保概率输出
+dt_model = DecisionTreeClassifier(random_state=42)
+
+# 网格搜索和模型训练
+models = {
+    'knn': (knn_model, param_grid_knn),
+    'mlp': (mlp_model, param_grid_mlp),
+    'svm': (svm_model, param_grid_svm),
+    'dt': (dt_model, param_grid_dt)
+}
+
+best_models = {}
+for name, (model, param_grid) in models.items():
+    grid_search = GridSearchCV(estimator=model, param_grid=param_grid, cv=5, scoring='accuracy', n_jobs=-1)
+    grid_search.fit(X_train, y_train)
+    best_models[name] = grid_search.best_estimator_
+    print(f"{name.upper()} Best Parameters: {grid_search.best_params_}")
+
+# 定义一个函数来计算和打印评价指标，并返回预测概率和硬性预测
+def evaluate_model(model, X, y, set_name):
+    y_pred = model.predict(X)
+    y_prob = model.predict_proba(X)[:, 1] if hasattr(model, 'predict_proba') else None
+    
+    print(f"{set_name} Classification Report:")
+    print(classification_report(y, y_pred))
+    
+    test_accuracy = accuracy_score(y, y_pred)
+    test_mcc = matthews_corrcoef(y, y_pred)
+    test_recall = recall_score(y, y_pred)
+    test_roc_auc = roc_auc_score(y, y_prob) if y_prob is not None else None
+    
+    print(f"{set_name} Accuracy: {test_accuracy:.4f}")
+    print(f"{set_name} MCC: {test_mcc:.4f}")
+    print(f"{set_name} Recall: {test_recall:.4f}")
+    if test_roc_auc is not None:
+        print(f"{set_name} AUC-ROC: {test_roc_auc:.4f}")
+    
+    return y_prob, y_pred, test_roc_auc
+
+# 对每个模型进行评价并获取预测概率
+results = []
+for name, model in best_models.items():
+    print(f"\n{name.upper()} Model Evaluation:")
+    train_prob, train_pred, train_roc_auc = evaluate_model(model, X_train, y_train, "Training Set")
+    test_prob, test_pred, test_roc_auc = evaluate_model(model, X_test, y_test, "Test Set")
+    
+    # 存储结果
+    results.append({
+        'Model': name,
+        'Set': 'Training Set',
+        'Accuracy': accuracy_score(y_train, train_pred),
+        'MCC': matthews_corrcoef(y_train, train_pred),
+        'Recall': recall_score(y_train, train_pred),
+        'AUC-ROC': train_roc_auc,
+        'Prediction Probabilities': train_prob.tolist() if train_prob is not None else None
+    })
+    results.append({
+        'Model': name,
+        'Set': 'Test Set',
+        'Accuracy': accuracy_score(y_test, test_pred),
+        'MCC': matthews_corrcoef(y_test, test_pred),
+        'Recall': recall_score(y_test, test_pred),
+        'AUC-ROC': test_roc_auc,
+        'Prediction Probabilities': test_prob.tolist() if test_prob is not None else None
+    })
+
+# 转换为 DataFrame
+results_df = pd.DataFrame(results)
+
+# 保存为 Excel 文件
+results_df.to_excel("D:/DATA/results_with_probs.xlsx", index=False)
+
+# 保存最佳模型
+for name, model in best_models.items():
+    model_path = f'D:/model/{name}_best_model.joblib'
+    dump(model, model_path)
+    print(f"Saved {name.upper()} best model to {model_path}")
