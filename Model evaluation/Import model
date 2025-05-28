@@ -1,0 +1,97 @@
+import pandas as pd
+from sklearn.model_selection import train_test_split, KFold
+from sklearn.metrics import accuracy_score, matthews_corrcoef, f1_score, recall_score, roc_auc_score, precision_score
+import joblib
+import matplotlib.pyplot as plt
+import numpy as np  
+
+# 加载数据
+df1 = pd.read_excel("D:/DATA/训练集.xlsx")
+df2 = pd.read_excel("D:/DATA/测试集.xlsx")
+
+# 分割特征与标签
+X_train = df1.iloc[:, 8:174]  # 特征
+y_train = df1.iloc[:, -1]  # 标签
+
+X_test = df2.iloc[:, 8:174]  # 特征
+y_test = df2.iloc[:, -1]  # 标签
+
+# 定义joblib文件路径
+joblib_files = {
+    'KNN': "D:/model/knn_best_model.joblib",
+    'MLP': "D:/model/mlp_best_model.joblib",
+    'SVM': "D:/model/svm_best_model.joblib",
+    'DT': "D:/model/dt_best_model.joblib"
+}
+
+# 定义评价指标计算函数，添加precision指标计算
+def evaluate_model(model, X_train, y_train, X_test, y_test):
+    y_train_pred = model.predict(X_train)
+    y_test_pred = model.predict(X_test)
+
+    train_acc = accuracy_score(y_train, y_train_pred)
+    train_mcc = matthews_corrcoef(y_train, y_train_pred)
+    train_f1 = f1_score(y_train, y_train_pred)
+    train_recall = recall_score(y_train, y_train_pred)
+    train_auc = roc_auc_score(y_train, model.predict_proba(X_train)[:, 1]) if hasattr(model, 'predict_proba') else np.nan
+    train_precision = precision_score(y_train, y_train_pred)  # 计算训练集精确率
+
+    test_acc = accuracy_score(y_test, y_test_pred)
+    test_mcc = matthews_corrcoef(y_test, y_test_pred)
+    test_f1 = f1_score(y_test, y_test_pred)
+    test_recall = recall_score(y_test, y_test_pred)
+    test_auc = roc_auc_score(y_test, model.predict_proba(X_test)[:, 1]) if hasattr(model, 'predict_proba') else np.nan
+    test_precision = precision_score(y_test, y_test_pred)  # 计算测试集精确率
+
+    return {
+        'train_acc': train_acc,
+        'train_mcc': train_mcc,
+        'train_f1': train_f1,
+        'train_recall': train_recall,
+        'train_auc': train_auc,
+        'train_precision': train_precision,  # 添加训练集精确率到返回结果
+        'test_acc': test_acc,
+        'test_mcc': test_mcc,
+        'test_f1': test_f1,
+        'test_recall': test_recall,
+        'test_auc': test_auc,
+        'test_precision': test_precision  # 添加测试集精确率到返回结果
+    }
+
+# 加载模型并评估
+results = {}
+for model_name, file_path in joblib_files.items():
+    model = joblib.load(file_path)
+    evaluation = evaluate_model(model, X_train, y_train, X_test, y_test)
+    results[model_name] = evaluation
+
+    # 打印结果
+    print(f"Model: {model_name}")
+    print(f"Train ACC: {evaluation['train_acc']:.4f}, MCC: {evaluation['train_mcc']:.4f}, F1-Score: {evaluation['train_f1']:.4f}, Recall: {evaluation['train_recall']:.4f}, AUC: {evaluation['train_auc']:.4f}, Precision: {evaluation['train_precision']:.4f}")
+    print(f"Test ACC: {evaluation['test_acc']:.4f}, MCC: {evaluation['test_mcc']:.4f}, F1-Score: {evaluation['test_f1']:.4f}, Recall: {evaluation['test_recall']:.4f}, AUC: {evaluation['test_auc']:.4f}, Precision: {evaluation['test_precision']:.4f}")
+    print("-" * 50)
+
+# 绘制组合的条形统计图（训练集，所有模型在一张图），添加precision指标绘图
+metrics_train = ['ACC', 'MCC', 'F1 - Score', 'Recall', 'AUC', 'Precision']  # 添加Train Precision
+model_names = list(results.keys())
+width = 0.22  # 减小每个柱状图的宽度以减小间隙
+x_positions = np.arange(len(metrics_train))  # x轴刻度位置
+
+# 设置不同模型对应的颜色
+colors = {'KNN': '#8ECFC9', 'MLP': '#FFBE7A', 'SVM': '#FA7F6F', 'DT': '#82B0D2'}
+
+plt.figure(figsize=(10, 6))
+for index, model_name in enumerate(model_names):
+    evaluation = results[model_name]
+    train_values = [evaluation['train_acc'], evaluation['train_mcc'], evaluation['train_f1'], evaluation['train_recall'], evaluation['train_auc'], evaluation['train_precision']]  # 添加精确率指标值
+    plt.bar(x_positions + index * width, train_values, width=width, label=model_name, color=colors[model_name])
+
+plt.xlabel('')
+plt.ylabel('Score')
+plt.title('Training Evaluation Metrics for All Models')
+plt.xticks(x_positions + (len(model_names) - 1) * width / 2, metrics_train, rotation=45)  # 设置x轴刻度及标签，使其居中显示
+plt.ylim(0, 1.05)  # 设置纵坐标范围为0到1.05
+plt.legend(loc='upper center', bbox_to_anchor=(0.5, -0.15), ncol=len(model_names))  # 将图例横着放
+plt.tight_layout()
+plt.show()
+plt.close()
