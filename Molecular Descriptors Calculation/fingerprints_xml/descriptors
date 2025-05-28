@@ -1,1 +1,111 @@
 MACCS fingerprints (MACCS, 166 bits) were calculated by PaDEL-Descriptor, to develop machine learning models. PaDEL is a powerful chemical informatics software that can calculate a variety of molecular descriptors, including Pubchem fingerprint, Substructure fingerprint, and MACCS molecular fingerprints, that can obtain the unique characteristics of the molecule. It uses binary coding to dectect and represent certain substructures in the molecule.
+import pandas as pd
+import glob
+import os
+from padelpy import padeldescriptor
+from rdkit import Chem
+
+# 读取CSV文件
+try:
+    # 使用绝对路径并确保路径正确
+    df = pd.read_csv(r"D:\YANJIUSHENG\代谢化合物数据集\结构\CYP3A4底物数据集_processed2.csv", low_memory=False)
+    smi = list(df["SMILES"].astype(str))
+    other_cols = df.columns.difference(['SMILES'])  # 获取除SMILES列外的其他列名
+except FileNotFoundError:
+    print("CSV文件未找到，请检查路径是否正确。")
+    exit(1)
+except Exception as e:
+    print(f"读取CSV文件时发生错误: {e}")
+    exit(1)
+
+# 检查SMILES的有效性
+invalid_smiles = []
+for index, smile in enumerate(smi):
+    mol = Chem.MolFromSmiles(smile)
+    if mol is None:
+        invalid_smiles.append(index)
+if invalid_smiles:
+    print(f"发现 {len(invalid_smiles)} 个无效的SMILES，已记录其在列表中的索引位置: {invalid_smiles}")
+
+# 获取指纹XML文件路径
+xml_files = glob.glob(r"PaDel计算描述符\\fingerprints_xml\\*.xml")  # 调用padel描述符依赖路径
+if not xml_files:
+    print("未找到指纹XML文件，请检查路径是否正确。")
+    exit(1)
+xml_files.sort()
+
+FP_list = [
+    'AtomPairs2DCount', 'AtomPairs2D', 'EState', 'CDKextended', 'CDK', 'CDKgraphonly',
+    'KlekotaRothCount', 'KlekotaRoth', 'MACCS', 'PubChem', 'SubstructureCount', 'Substructure'
+]
+
+fp = dict(zip(FP_list, xml_files))
+
+# 检查MACCS指纹的XML文件是否存在
+fingerprint = 'MACCS'
+fingerprint_descriptortypes = fp.get(fingerprint)
+if not fingerprint_descriptortypes:
+    print(f"未找到{fingerprint}的XML文件，请检查路径和文件名是否正确。")
+    exit(1)
+
+# 分批次处理SMILES
+batch_size = 100
+all_results = []
+for i in range(0, len(smi), batch_size):
+    end_index = min(i + batch_size, len(smi))
+    batch_smi = [smi[j] for j in range(i, end_index) if j not in invalid_smiles]
+    # 将当前批次的SMILES写入临时文件
+    with open('temp_molecules.smi', 'w') as f:
+        for smile in batch_smi:
+            f.write(smile + '\n')
+
+    # 计算MACCS指纹
+    fingerprint_output_file = f'temp_batch_{i // batch_size}_MACCS.csv'
+    try:
+        padeldescriptor(
+            mol_dir='temp_molecules.smi',
+            d_file=fingerprint_output_file,
+            descriptortypes=fingerprint_descriptortypes,
+            detectaromaticity=True,
+            standardizenitro=True,
+            standardizetautomers=True,
+            threads=2,
+            removesalt=True,
+            log=True,
+            fingerprints=True
+        )
+        batch_results = pd.read_csv(fingerprint_output_file)
+        all_results.append(batch_results)
+    except Exception as e:
+        print(f"处理批次 {i // batch_size} 时发生错误: {e}")
+
+# 合并所有批次的结果
+combined_results = pd.concat(all_results, ignore_index=True)
+
+# 读取合并后的文件进行修改
+try:
+    descriptors = combined_results
+    # 确保输出文件中的记录数量与输入的SMILES数量一致（经过无效SMILES过滤和分批次处理后）
+    valid_smi = [smi[j] for j in range(len(smi)) if j not in invalid_smiles]
+
+    # 找出导致数量不一致的索引
+    missing_indices = [idx for idx in range(len(valid_smi)) if idx not in descriptors.index]
+    valid_smi = [s for idx, s in enumerate(valid_smi) if idx not in missing_indices]
+    descriptors = descriptors.reset_index(drop=True)
+
+    if len(descriptors) != len(valid_smi):
+        print("警告：输出文件中的记录数量与输入的有效SMILES数量不一致，可能数据错乱。")
+
+    # 将有效SMILES字符串赋值给Name列
+    descriptors['Name'] = valid_smi
+
+    # 将其他列的数据也添加进来
+    for col in other_cols:
+        descriptors[col] = df[col].iloc[[idx for idx in range(len(df)) if idx not in invalid_smiles]].reset_index(drop=True)
+
+    # 将修改后的数据重新保存到CSV文件中
+    final_output_file = r'D:\YANJIUSHENG\代谢化合物数据集\结构\CYP3A4底物-MACCS2.csv'
+    descriptors.to_csv(final_output_file, index=False)
+    print(descriptors.head())
+except Exception as e:
+    print(f"读取或处理合并后的MACCS指纹文件时发生错误: {e}")
